@@ -33,6 +33,7 @@ main(void)
 	unsigned long tick = 0;
 	unsigned long clock_last_updated = 0;
 	struct timespec timeout = { .tv_nsec = TICK_INTERVAL };
+	struct timespec remain;
 
 	if (display == NULL)
 	{
@@ -45,14 +46,6 @@ main(void)
 
 	for (;;)
 	{
-		if (nanosleep(&timeout, NULL) < 0 && errno != EINTR)
-		{
-			perror("nanosleep");
-
-			return 1;
-		}
-		tick++;
-
 		/* Clock */
 		if (tick >= clock_last_updated + 9)
 		{
@@ -62,11 +55,28 @@ main(void)
 			dirty = true;
 		}
 
-		if (!dirty) continue;
+		if (dirty)
+		{
+			XStoreName(display, root, statbar_text);
+			XFlush(display);
+			dirty = false;
+		}
+		if (nanosleep(&timeout, &remain) < 0 && errno != EINTR)
+		{
+			perror("nanosleep");
 
-		XStoreName(display, root, statbar_text);
-		XFlush(display);
-		dirty = false;
+			return 1;
+		}
+		while (remain.tv_nsec > 0)
+		{
+			if (nanosleep(&remain, &remain) < 0 && errno != EINTR)
+			{
+				perror("nanosleep");
+
+				return 1;
+			}
+		}
+		tick++;
 	}
 
 	return 0;
