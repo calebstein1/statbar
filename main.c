@@ -167,7 +167,6 @@ main(void)
 	unsigned long clock_last_updated = 0;
 	unsigned long battery_last_updated = 0;
 	struct timespec timeout = { .tv_nsec = TICK_INTERVAL };
-	struct timespec remain;
 	int apm_fd;
 
 	if (display == NULL)
@@ -222,20 +221,11 @@ main(void)
 			XFlush(display);
 			dirty = false;
 		}
-		if (nanosleep(&timeout, &remain) < 0 && errno != EINTR)
+		if (nanosleep(&timeout, NULL) < 0 && errno != EINTR)
 		{
 			perror("nanosleep");
 
 			return 1;
-		}
-		while (remain.tv_nsec > 0)
-		{
-			if (nanosleep(&remain, &remain) < 0 && errno != EINTR)
-			{
-				perror("nanosleep");
-
-				return 1;
-			}
 		}
 		tick++;
 	}
