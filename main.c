@@ -7,10 +7,12 @@
 
 #include <fcntl.h>
 #include <poll.h>
+#include <pwd.h>
 #include <signal.h>
 #include <unistd.h>
 #include <machine/apmvar.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 
 #include <sndio.h>
 #include <X11/Xlib.h>
@@ -25,6 +27,82 @@ enum clocks_e
 };
 
 static volatile sig_atomic_t should_quit = 0;
+static volatile sig_atomic_t reload_requested = 0;
+
+void
+read_config(struct timespec *clock_interval, struct timespec *battery_interval)
+{
+	const char *config_path[] = { "/.config", "/statbar", "/statbar.conf", NULL };
+	char *config_full_path;
+	size_t config_full_path_len;
+	time_t clock_ms;
+	time_t battery_ms;
+	uid_t uid;
+	struct passwd *pw;
+	int mkdir_ret;
+	FILE *file;
+	char *line = NULL;
+	int i = 0;
+	size_t n = 0;
+
+	reload_requested = 0;
+
+	uid = getuid();
+	pw = getpwuid(uid);
+
+	if (pw == NULL)
+	{
+		perror("getpwuid");
+
+		return;
+	}
+
+	config_full_path_len = strlen(pw->pw_dir);
+	while (config_path[i])
+		config_full_path_len += strlen(config_path[i++]);
+	config_full_path_len++;
+	config_full_path = malloc(config_full_path_len);
+	if (config_full_path == NULL)
+	{
+		perror("malloc");
+
+		return;
+	}
+	(void)strcpy(config_full_path, pw->pw_dir);
+	i = 0;
+	while (config_path[i + 1])
+	{
+		(void)strcat(config_full_path, config_path[i++]);
+		mkdir_ret = mkdir(config_full_path, 0700);
+		if (mkdir_ret != 0 && errno != EEXIST)
+		{
+			perror("mkdir");
+			free(config_full_path);
+
+			return;
+		}
+	}
+	(void)strcat(config_full_path, config_path[i]);
+	file = fopen(config_full_path, "r");
+	if (file == NULL)
+	{
+		free(config_full_path);
+
+		return;
+	}
+	free(config_full_path);
+
+	while (getline(&line, &n, file) > 0)
+	{
+		printf("%s", line);
+		free(line);
+		line = NULL;
+		n = 0;
+	}
+	if (ferror(file))
+		perror("getline");
+	(void)fclose(file);
+}
 
 void
 get_clock(char *clock_string)
@@ -98,16 +176,31 @@ quit_handler(int sig, siginfo_t *info, void *context)
 }
 
 void
+reload_handler(int sig, siginfo_t *info, void *context)
+{
+	(void)sig;
+	(void)info;
+	(void)context;
+
+	reload_requested = 1;
+}
+
+void
 install_signal_handlers(void)
 {
 	struct sigaction should_quit_action;
+	struct sigaction reload_requested_action;
 
 	should_quit_action.sa_sigaction = quit_handler;
 	should_quit_action.sa_flags = SA_SIGINFO | SA_RESTART;
 	(void)sigemptyset(&should_quit_action.sa_mask);
+	reload_requested_action.sa_sigaction = reload_handler;
+	reload_requested_action.sa_flags = SA_SIGINFO | SA_RESTART;
+	(void)sigemptyset(&reload_requested_action.sa_mask);
 
 	if (sigaction(SIGTERM, &should_quit_action, NULL) == -1) perror("sigaction");
 	if (sigaction(SIGINT, &should_quit_action, NULL) == -1) perror("sigaction");
+	if (sigaction(SIGUSR1, &reload_requested_action, NULL) == -1) perror("sigaction");
 }
 
 int
@@ -146,6 +239,7 @@ main(void)
 	root = DefaultRootWindow(display);
 
 	/* Init components */
+	read_config(&clock_interval, &battery_interval);
 	(void)clock_gettime(CLOCK_MONOTONIC, &now);
 	timespecadd(&now, &clock_interval, &clocks[CLOCK_CLOCK]);
 	timespecadd(&now, &battery_interval, &clocks[BATTERY_CLOCK]);
@@ -187,6 +281,7 @@ main(void)
 
 	while (!should_quit)
 	{
+		if (reload_requested) read_config(&clock_interval, &battery_interval);
 		(void)clock_gettime(CLOCK_MONOTONIC, &now);
 		nev = sioctl_pollfd(hdl, pfd, POLLIN);
 
