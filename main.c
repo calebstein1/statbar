@@ -17,7 +17,14 @@
 
 #define MAX_STATBAR_LEN 128
 
-static volatile sig_atomic_t shutdown = 0;
+enum clocks_e
+{
+	CLOCK_CLOCK,
+	BATTERY_CLOCK,
+	CLOCKS_COUNT
+};
+
+static volatile sig_atomic_t should_quit = 0;
 
 void
 get_clock(char *clock_string)
@@ -81,26 +88,26 @@ init_volume(void *arg, struct sioctl_desc *desc, int val)
 }
 
 void
-shutdown_handler(int sig, siginfo_t *info, void *context)
+quit_handler(int sig, siginfo_t *info, void *context)
 {
 	(void)sig;
 	(void)info;
 	(void)context;
 
-	shutdown = 1;
+	should_quit = 1;
 }
 
 void
 install_signal_handlers(void)
 {
-	struct sigaction shutdown;
+	struct sigaction should_quit_action;
 
-	shutdown.sa_sigaction = shutdown_handler;
-	shutdown.sa_flags = SA_SIGINFO | SA_RESTART;
-	(void)sigemptyset(&shutdown.sa_mask);
+	should_quit_action.sa_sigaction = quit_handler;
+	should_quit_action.sa_flags = SA_SIGINFO | SA_RESTART;
+	(void)sigemptyset(&should_quit_action.sa_mask);
 
-	if (sigaction(SIGTERM, &shutdown, NULL) == -1) perror("sigaction");
-	if (sigaction(SIGINT, &shutdown, NULL) == -1) perror("sigaction");
+	if (sigaction(SIGTERM, &should_quit_action, NULL) == -1) perror("sigaction");
+	if (sigaction(SIGINT, &should_quit_action, NULL) == -1) perror("sigaction");
 }
 
 int
@@ -116,15 +123,17 @@ main(void)
 	bool apm_open = false;
 	bool hdl_open = false;
 	struct timespec now;
-	struct timespec clock_clock;
-	struct timespec clock_interval = { .tv_nsec = 900000000L };
-	struct timespec battery_clock;
+	struct timespec clocks[CLOCKS_COUNT];
+	struct timespec *next_event;
+	struct timespec next_interval;
+	struct timespec clock_interval = { .tv_sec = 1 };
 	struct timespec battery_interval = { .tv_sec = 5 };
 	struct sioctl_hdl *hdl;
 	struct pollfd *pfd;
 	int nfds = 0;
 	int nev;
 	int apm_fd;
+	int i;
 
 	if (display == NULL)
 	{
@@ -138,8 +147,8 @@ main(void)
 
 	/* Init components */
 	(void)clock_gettime(CLOCK_MONOTONIC, &now);
-	timespecadd(&now, &clock_interval, &clock_clock);
-	timespecadd(&now, &battery_interval, &battery_clock);
+	timespecadd(&now, &clock_interval, &clocks[CLOCK_CLOCK]);
+	timespecadd(&now, &battery_interval, &clocks[BATTERY_CLOCK]);
 
 	get_clock(clock_string);
 
@@ -176,12 +185,37 @@ main(void)
 		goto cleanup;
 	}
 
-	while (!shutdown)
+	while (!should_quit)
 	{
 		(void)clock_gettime(CLOCK_MONOTONIC, &now);
 		nev = sioctl_pollfd(hdl, pfd, POLLIN);
 
-		if (poll(pfd, nev, 100) > 0)
+		next_event = NULL;
+		for (i = 0; i < CLOCKS_COUNT; i++)
+		{
+			if (next_event == NULL)
+			{
+				next_event = &clocks[i];
+			}
+			else
+			{
+				if (timespeccmp(next_event, &clocks[i], >))
+				{
+					next_event = &clocks[i];
+				}
+			}
+		}
+		if (timespeccmp(&now, next_event, >=))
+		{
+			next_interval.tv_sec = 0;
+			next_interval.tv_nsec = 0;
+		}
+		else
+		{
+			timespecsub(next_event, &now, &next_interval);
+		}
+
+		if (ppoll(pfd, nev, &next_interval, NULL) > 0)
 		{
 			if (hdl_open && sioctl_revents(hdl, pfd) & POLLHUP)
 			{
@@ -192,20 +226,23 @@ main(void)
 
 			dirty = true;
 		}
+		(void)clock_gettime(CLOCK_MONOTONIC, &now);
 
 		/* Clock */
-		if (timespeccmp(&now, &clock_clock, >))
+		if (timespeccmp(&now, &clocks[CLOCK_CLOCK], >=))
 		{
 			get_clock(clock_string);
 			dirty = true;
-			timespecadd(&now, &clock_interval, &clock_clock);
+			while (timespeccmp(&now, &clocks[CLOCK_CLOCK], >=))
+				timespecadd(&clocks[CLOCK_CLOCK], &clock_interval, &clocks[CLOCK_CLOCK]);
 		}
 		/* Battery */
-		if (apm_open && timespeccmp(&now, &battery_clock, >))
+		if (apm_open && timespeccmp(&now, &clocks[BATTERY_CLOCK], >=))
 		{
 			get_battery(battery_string, apm_fd);
 			dirty = true;
-			timespecadd(&now, &battery_interval, &battery_clock);
+			while (timespeccmp(&now, &clocks[BATTERY_CLOCK], >=))
+				timespecadd(&clocks[BATTERY_CLOCK], &battery_interval, &clocks[BATTERY_CLOCK]);
 		}
 
 		if (dirty)
