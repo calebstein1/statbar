@@ -46,10 +46,12 @@ get_battery(char *battery_string, int fd)
 		return;
 	}
 
-	if (pinfo.ac_state == 1)
+	if (pinfo.ac_state == APM_AC_ON)
 		pstate = '+';
-	else if (pinfo.battery_state == 2)
+	else if (pinfo.battery_state == APM_BATT_CRITICAL)
 		pstate = '!';
+	else if (pinfo.ac_state == APM_AC_UNKNOWN || pinfo.battery_state == APM_BATT_UNKNOWN)
+		pstate = '?';
 	else
 		pstate = ' ';
 
@@ -117,7 +119,7 @@ main(void)
 	struct timespec clock_clock;
 	struct timespec clock_interval = { .tv_nsec = 900000000L };
 	struct timespec battery_clock;
-	struct timespec battery_interval = { .tv_sec = 10 };
+	struct timespec battery_interval = { .tv_sec = 5 };
 	struct sioctl_hdl *hdl;
 	struct pollfd *pfd;
 	int nfds = 0;
