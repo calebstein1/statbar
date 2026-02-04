@@ -42,6 +42,9 @@ read_config(struct timespec *clock_interval, struct timespec *battery_interval)
 	int mkdir_ret;
 	FILE *file;
 	char *line = NULL;
+	char *delim;
+	char *nline;
+	int val;
 	int i = 0;
 	size_t n = 0;
 
@@ -94,10 +97,44 @@ read_config(struct timespec *clock_interval, struct timespec *battery_interval)
 
 	while (getline(&line, &n, file) > 0)
 	{
-		printf("%s", line);
+		delim = strchr(line, ':');
+		if (delim == NULL || *(delim + 1) == '\n' || *(delim + 1) == '\0')
+			goto read_err;
+
+		nline = strchr(delim, '\n');
+		if (nline != NULL) *nline = '\0';
+
+		/* 10 minute max is arbitrary */
+		val = (int)strtonum(delim + 1, 1, 600000, NULL);
+		if (val == 0)
+			goto read_err;
+
+		if (strncmp(line, "clock interval", strlen("clock interval")) == 0)
+		{
+			clock_interval->tv_sec = val / 1000;
+			clock_interval->tv_nsec = (val % 1000) * 1000000;
+		}
+		else if (strncmp(line, "battery interval", strlen("battery interval")) == 0)
+		{
+			battery_interval->tv_sec = val / 1000;
+			battery_interval->tv_nsec = (val % 1000) * 1000000;
+		}
+		else
+		{
+			goto read_err;
+		}
+
 		free(line);
 		line = NULL;
 		n = 0;
+		continue;
+
+	read_err:
+		(void)fputs("Malformed config file\n", stderr);
+		free(line);
+		(void)fclose(file);
+
+		return;
 	}
 	if (ferror(file))
 		perror("getline");
