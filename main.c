@@ -44,17 +44,13 @@ get_battery(char *battery_string, int fd)
 		return;
 	}
 
-	switch (pinfo.battery_state)
-	{
-		case 2:
-			pstate = '!';
-			break;
-		case 3:
-			pstate = '+';
-			break;
-		default:
-			pstate = ' ';
-	}
+	if (pinfo.ac_state == 1)
+		pstate = '+';
+	else if (pinfo.battery_state == 2)
+		pstate = '!';
+	else
+		pstate = ' ';
+
 	snprintf(battery_string, 10, "Bat: %3d%c", pinfo.battery_life, pstate);
 }
 
@@ -132,7 +128,7 @@ main(void)
 		}
 
 		/* Battery */
-		if (apm_open && tick >= battery_last_updated + 49)
+		if (apm_open && tick >= battery_last_updated + 99)
 		{
 			get_battery(battery_string, apm_fd);
 			battery_last_updated = tick;
