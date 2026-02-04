@@ -7,7 +7,6 @@
 
 #include <fcntl.h>
 #include <poll.h>
-#include <pthread.h>
 #include <signal.h>
 #include <unistd.h>
 #include <machine/apmvar.h>
@@ -16,12 +15,9 @@
 #include <sndio.h>
 #include <X11/Xlib.h>
 
-#define MAX_STATBAR_LEN 64
-#define TICK_INTERVAL 100000000L
+#define MAX_STATBAR_LEN 128
 
-static pthread_t volume_thread;
-static bool shutdown = false;
-static bool dirty = true;
+static volatile sig_atomic_t shutdown = 0;
 
 void
 get_clock(char *clock_string)
@@ -82,53 +78,6 @@ init_volume(void *arg, struct sioctl_desc *desc, int val)
 	}
 }
 
-void *
-volume_poll(void *arg)
-{
-	static struct sioctl_hdl *hdl;
-	static struct pollfd *pfd;
-	char *volume_string = arg;
-	int nfds;
-	int nev;
-
-	hdl = sioctl_open(SIO_DEVANY, SIOCTL_READ, 0);
-	if (hdl == NULL)
-	{
-		(void)fputs("Could not open sndio\n", stderr);
-		(void)strcpy(volume_string, "Vol: ?");
-		pthread_exit(NULL);
-	}
-
-	nfds = sioctl_nfds(hdl);
-	pfd = malloc(nfds * sizeof(struct pollfd));
-	if (pfd == NULL)
-	{
-		perror("malloc");
-		pthread_exit(NULL);
-	}
-	(void)sioctl_ondesc(hdl, init_volume, volume_string);
-	(void)sioctl_onval(hdl, get_volume, volume_string);
-
-	while (!shutdown)
-	{
-		nev = sioctl_pollfd(hdl, pfd, POLLIN);
-
-		if (poll(pfd, nev, -1) > 0)
-		{
-			if (sioctl_revents(hdl, pfd) & POLLHUP)
-				goto cleanup;
-
-			dirty = true;
-		}
-	}
-
-cleanup:
-	sioctl_close(hdl);
-	free(pfd);
-
-	return NULL;
-}
-
 void
 shutdown_handler(int sig, siginfo_t *info, void *context)
 {
@@ -136,14 +85,13 @@ shutdown_handler(int sig, siginfo_t *info, void *context)
 	(void)info;
 	(void)context;
 
-	shutdown = true;
+	shutdown = 1;
 }
 
 void
 install_signal_handlers(void)
 {
 	struct sigaction shutdown;
-	struct sigaction volume;
 
 	shutdown.sa_sigaction = shutdown_handler;
 	shutdown.sa_flags = SA_SIGINFO | SA_RESTART;
@@ -162,11 +110,18 @@ main(void)
 	char clock_string[26];
 	char battery_string[10];
 	char volume_string[10];
+	bool dirty = true;
 	bool apm_open = false;
-	unsigned long tick = 0;
-	unsigned long clock_last_updated = 0;
-	unsigned long battery_last_updated = 0;
-	struct timespec timeout = { .tv_nsec = TICK_INTERVAL };
+	bool hdl_open = false;
+	struct timespec now;
+	struct timespec clock_clock;
+	struct timespec clock_interval = { .tv_nsec = 900000000L };
+	struct timespec battery_clock;
+	struct timespec battery_interval = { .tv_sec = 10 };
+	struct sioctl_hdl *hdl;
+	struct pollfd *pfd;
+	int nfds = 0;
+	int nev;
 	int apm_fd;
 
 	if (display == NULL)
@@ -179,6 +134,13 @@ main(void)
 	statbar_text[0] = '\0';
 	root = DefaultRootWindow(display);
 
+	/* Init components */
+	(void)clock_gettime(CLOCK_MONOTONIC, &now);
+	timespecadd(&now, &clock_interval, &clock_clock);
+	timespecadd(&now, &battery_interval, &battery_clock);
+
+	get_clock(clock_string);
+
 	apm_fd = open("/dev/apm", O_RDONLY);
 	if (apm_fd < 0)
 	{
@@ -190,25 +152,58 @@ main(void)
 		get_battery(battery_string, apm_fd);
 		apm_open = true;
 	}
-	if (pthread_create(&volume_thread, NULL, volume_poll, volume_string) != 0)
-		(void)fputs("Failed to create volume thread\n", stderr);
-	get_clock(clock_string);
+
+	hdl = sioctl_open(SIO_DEVANY, SIOCTL_READ, 0);
+	if (hdl == NULL)
+	{
+		(void)fputs("Could not open sndio\n", stderr);
+		(void)strcpy(volume_string, "Vol: ?");
+	}
+	else
+	{
+		nfds += sioctl_nfds(hdl);
+		(void)sioctl_ondesc(hdl, init_volume, volume_string);
+		(void)sioctl_onval(hdl, get_volume, volume_string);
+		hdl_open = true;
+	}
+
+	pfd = malloc(nfds * sizeof(struct pollfd));
+	if (pfd == NULL)
+	{
+		perror("malloc");
+		goto cleanup;
+	}
 
 	while (!shutdown)
 	{
-		/* Clock */
-		if (tick >= clock_last_updated + 9)
+		(void)clock_gettime(CLOCK_MONOTONIC, &now);
+		nev = sioctl_pollfd(hdl, pfd, POLLIN);
+
+		if (poll(pfd, nev, 100) > 0)
 		{
-			get_clock(clock_string);
-			clock_last_updated = tick;
+			if (hdl_open && sioctl_revents(hdl, pfd) & POLLHUP)
+			{
+				(void)fputs("Lost connection to sndio\n", stderr);
+				sioctl_close(hdl);
+				hdl_open = false;
+			}
+
 			dirty = true;
 		}
+
+		/* Clock */
+		if (timespeccmp(&now, &clock_clock, >))
+		{
+			get_clock(clock_string);
+			dirty = true;
+			timespecadd(&now, &clock_interval, &clock_clock);
+		}
 		/* Battery */
-		if (apm_open && tick >= battery_last_updated + 99)
+		if (apm_open && timespeccmp(&now, &battery_clock, >))
 		{
 			get_battery(battery_string, apm_fd);
-			battery_last_updated = tick;
 			dirty = true;
+			timespecadd(&now, &battery_interval, &battery_clock);
 		}
 
 		if (dirty)
@@ -221,16 +216,12 @@ main(void)
 			XFlush(display);
 			dirty = false;
 		}
-		if (nanosleep(&timeout, NULL) < 0 && errno != EINTR)
-		{
-			perror("nanosleep");
-
-			return 1;
-		}
-		tick++;
 	}
 
+cleanup:
 	if (apm_open) (void)close(apm_fd);
+	if (hdl_open) sioctl_close(hdl);
+	free(pfd);
 
 	return 0;
 }
