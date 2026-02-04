@@ -3,7 +3,7 @@ SRCS=	main.c
 MAN=
 
 CFLAGS += -I/usr/X11R6/include
-LDFLAGS += -L/usr/X11R6/lib -lX11
+LDFLAGS += -L/usr/X11R6/lib -lsndio -lX11 -pthread
 
 .include <bsd.prog.mk>
 
