@@ -5,6 +5,7 @@
 #include <string.h>
 #include <time.h>
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <pwd.h>
@@ -14,6 +15,7 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/types.h>
 
 #include <sndio.h>
 #include <X11/Xlib.h>
@@ -24,14 +26,20 @@ enum clocks_e
 {
 	CLOCK_CLOCK,
 	BATTERY_CLOCK,
+	MAIL_CLOCK,
 	CLOCKS_COUNT
 };
 
 static volatile sig_atomic_t should_quit = 0;
 static volatile sig_atomic_t reload_requested = 0;
+static bool mail_path_valid = 0;
 
 void
-read_config(struct timespec *clock_interval, struct timespec *battery_interval)
+read_config(
+	struct timespec *clock_interval,
+	struct timespec *battery_interval,
+	struct timespec *mail_interval,
+	char **mail_path)
 {
 	char *config_full_path;
 	char *path_sep;
@@ -94,6 +102,7 @@ read_config(struct timespec *clock_interval, struct timespec *battery_interval)
 
 	while (getline(&line, &n, file) > 0)
 	{
+		i++;
 		delim = strchr(line, ':');
 		if (delim == NULL || *(delim + 1) == '\n' || *(delim + 1) == '\0')
 			goto read_err;
@@ -101,8 +110,22 @@ read_config(struct timespec *clock_interval, struct timespec *battery_interval)
 		nline = strchr(delim, '\n');
 		if (nline != NULL) *nline = '\0';
 
+		if (strncmp(line, "inbox directory", strlen("inbox directory")) == 0)
+		{
+			if (*mail_path != NULL) free (*mail_path);
+			delim++;
+			while (*delim == ' ') delim++;
+			if (asprintf(mail_path, "%s/new", delim) == -1)
+				perror("asprintf");
+			else
+				mail_path_valid = 1;
+
+			continue;
+		}
+
 		/* 10 minute max is arbitrary */
-		val = (int)strtonum(delim + 1, 1, 600000, NULL);
+		delim++;
+		val = (int)strtonum(delim, 1, 600000, NULL);
 		if (val == 0)
 			goto read_err;
 
@@ -116,6 +139,11 @@ read_config(struct timespec *clock_interval, struct timespec *battery_interval)
 			battery_interval->tv_sec = val / 1000;
 			battery_interval->tv_nsec = (val % 1000) * 1000000;
 		}
+		else if (strncmp(line, "mail interval", strlen("mail interval")) == 0)
+		{
+			mail_interval->tv_sec = val / 1000;
+			mail_interval->tv_nsec = (val % 1000) * 1000000;
+		}
 		else
 		{
 			goto read_err;
@@ -125,7 +153,7 @@ read_config(struct timespec *clock_interval, struct timespec *battery_interval)
 		continue;
 
 	read_err:
-		(void)fputs("Malformed config file\n", stderr);
+		(void)fprintf(stderr, "Config syntax error line %d: %s\n", i, line);
 		free(line);
 		(void)fclose(file);
 
@@ -199,6 +227,33 @@ init_volume(void *arg, struct sioctl_desc *desc, int val)
 }
 
 void
+get_mail(char *mail_string, const char *mail_path)
+{
+	DIR *dir;
+	struct dirent *dp;
+
+	if (mail_path == NULL) return;
+
+	dir = opendir(mail_path);
+	if (dir == NULL)
+	{
+		perror("opendir");
+		mail_path_valid = 0;
+
+		return;
+	}
+	for (;;)
+	{
+		dp = readdir(dir);
+
+		if (dp == NULL || (strcmp(dp->d_name, ".") != 0 && strcmp(dp->d_name, "..")) != 0)
+			break;
+	}
+	*mail_string = dp ? 'M' : ' ';
+	(void)closedir(dir);
+}
+
+void
 quit_handler(int sig, siginfo_t *info, void *context)
 {
 	(void)sig;
@@ -245,6 +300,8 @@ main(void)
 	char clock_string[26];
 	char battery_string[12];
 	char volume_string[10];
+	char mail_string = ' ';
+	char *mail_path = NULL;
 	bool dirty = true;
 	bool apm_open = false;
 	bool hdl_open = false;
@@ -254,6 +311,7 @@ main(void)
 	struct timespec next_interval;
 	struct timespec clock_interval = { .tv_sec = 1 };
 	struct timespec battery_interval = { .tv_sec = 5 };
+	struct timespec mail_interval = { .tv_sec = 30 };
 	struct sioctl_hdl *hdl;
 	struct pollfd *pfd;
 	int nfds = 0;
@@ -272,10 +330,11 @@ main(void)
 	root = DefaultRootWindow(display);
 
 	/* Init components */
-	read_config(&clock_interval, &battery_interval);
+	read_config(&clock_interval, &battery_interval, &mail_interval, &mail_path);
 	(void)clock_gettime(CLOCK_MONOTONIC, &now);
 	timespecadd(&now, &clock_interval, &clocks[CLOCK_CLOCK]);
 	timespecadd(&now, &battery_interval, &clocks[BATTERY_CLOCK]);
+	timespecadd(&now, &mail_interval, &clocks[MAIL_CLOCK]);
 
 	get_clock(clock_string);
 
@@ -304,6 +363,7 @@ main(void)
 		(void)sioctl_onval(hdl, get_volume, volume_string);
 		hdl_open = true;
 	}
+	get_mail(&mail_string, mail_path);
 
 	pfd = malloc(nfds * sizeof(struct pollfd));
 	if (pfd == NULL)
@@ -314,7 +374,12 @@ main(void)
 
 	while (!should_quit)
 	{
-		if (reload_requested) read_config(&clock_interval, &battery_interval);
+		if (reload_requested) read_config(&clock_interval, &battery_interval, &mail_interval, &mail_path);
+		if (mail_path_valid == 0 && mail_path != NULL)
+		{
+			free(mail_path);
+			mail_path = NULL;
+		}
 		(void)clock_gettime(CLOCK_MONOTONIC, &now);
 		nev = sioctl_pollfd(hdl, pfd, POLLIN);
 
@@ -373,9 +438,19 @@ main(void)
 				timespecadd(&clocks[BATTERY_CLOCK], &battery_interval, &clocks[BATTERY_CLOCK]);
 		}
 
+		/* Mail */
+		if (timespeccmp(&now, &clocks[MAIL_CLOCK], >=))
+		{
+			get_mail(&mail_string, mail_path);
+			dirty = true;
+			while (timespeccmp(&now, &clocks[MAIL_CLOCK], >=))
+				timespecadd(&clocks[MAIL_CLOCK], &mail_interval, &clocks[MAIL_CLOCK]);
+		}
+
 		if (dirty)
 		{
-			(void)snprintf(statbar_text, MAX_STATBAR_LEN, "%s | %s | %s",
+			(void)snprintf(statbar_text, MAX_STATBAR_LEN, "%c | %s | %s | %s",
+				mail_string,
 				volume_string,
 				battery_string,
 				clock_string);
@@ -388,6 +463,7 @@ main(void)
 cleanup:
 	if (apm_open) (void)close(apm_fd);
 	if (hdl_open) sioctl_close(hdl);
+	if (mail_path) free(mail_path);
 	free(pfd);
 
 	return 0;
