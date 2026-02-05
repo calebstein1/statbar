@@ -33,9 +33,8 @@ static volatile sig_atomic_t reload_requested = 0;
 void
 read_config(struct timespec *clock_interval, struct timespec *battery_interval)
 {
-	const char *config_path[] = { "/.config", "/statbar", "/statbar.conf", NULL };
 	char *config_full_path;
-	size_t config_full_path_len;
+	char *path_sep;
 	time_t clock_ms;
 	time_t battery_ms;
 	uid_t uid;
@@ -61,22 +60,17 @@ read_config(struct timespec *clock_interval, struct timespec *battery_interval)
 		return;
 	}
 
-	config_full_path_len = strlen(pw->pw_dir);
-	while (config_path[i])
-		config_full_path_len += strlen(config_path[i++]);
-	config_full_path_len++;
-	config_full_path = malloc(config_full_path_len);
-	if (config_full_path == NULL)
+	if (asprintf(&config_full_path, "%s/.config/statbar/statbar.conf", pw->pw_dir) == -1)
 	{
-		perror("malloc");
+		perror("asprintf");
 
 		return;
 	}
-	(void)strcpy(config_full_path, pw->pw_dir);
-	i = 0;
-	while (config_path[i + 1])
+	path_sep = config_full_path + 1;
+	path_sep = strchr(path_sep, '/');
+	while (path_sep)
 	{
-		(void)strcat(config_full_path, config_path[i++]);
+		*path_sep = '\0';
 		mkdir_ret = mkdir(config_full_path, 0700);
 		if (mkdir_ret != 0 && errno != EEXIST)
 		{
@@ -85,8 +79,10 @@ read_config(struct timespec *clock_interval, struct timespec *battery_interval)
 
 			return;
 		}
+		*path_sep = '/';
+		path_sep++;
+		path_sep = strchr(path_sep, '/');
 	}
-	(void)strcat(config_full_path, config_path[i]);
 	file = fopen(config_full_path, "r");
 	if (file == NULL)
 	{
@@ -125,8 +121,6 @@ read_config(struct timespec *clock_interval, struct timespec *battery_interval)
 			goto read_err;
 		}
 
-		free(line);
-		line = NULL;
 		n = 0;
 		continue;
 
@@ -137,6 +131,7 @@ read_config(struct timespec *clock_interval, struct timespec *battery_interval)
 
 		return;
 	}
+	free(line);
 	if (ferror(file))
 		perror("getline");
 	(void)fclose(file);
