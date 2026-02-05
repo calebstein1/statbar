@@ -13,6 +13,7 @@
 #include <machine/apmvar.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 
 #include <sndio.h>
 #include <X11/Xlib.h>
@@ -177,7 +178,7 @@ get_battery(char *battery_string, int fd)
 	else
 		pstate = ' ';
 
-	(void)snprintf(battery_string, 10, "Bat: %3d%c", pinfo.battery_life, pstate);
+	(void)snprintf(battery_string, 12, "Bat: %3d%% %c", pinfo.battery_life, pstate);
 }
 
 void
@@ -247,7 +248,7 @@ main(void)
 	Window root;
 	char statbar_text[MAX_STATBAR_LEN];
 	char clock_string[26];
-	char battery_string[10];
+	char battery_string[12];
 	char volume_string[10];
 	bool dirty = true;
 	bool apm_open = false;
