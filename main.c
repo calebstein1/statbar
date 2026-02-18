@@ -246,8 +246,9 @@ get_mail(char *mail_string, const char *mail_path)
 	{
 		dp = readdir(dir);
 
-		if (dp == NULL || (strcmp(dp->d_name, ".") != 0 && strcmp(dp->d_name, "..")) != 0)
-			break;
+		if (dp == NULL ||
+			(strcmp(dp->d_name, ".") != 0
+			&& strcmp(dp->d_name, "..") != 0)) break;
 	}
 	*mail_string = dp ? 'M' : ' ';
 	(void)closedir(dir);
