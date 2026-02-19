@@ -4,22 +4,15 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <dirent.h>
-#include <fcntl.h>
 #include <poll.h>
 #include <pwd.h>
 #include <signal.h>
 #include <unistd.h>
-#include <machine/apmvar.h>
-#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
 
-#include <sndio.h>
 #include <X11/Xlib.h>
-
-#include <unicode/utf8.h>
 
 #include "statbar.h"
 
@@ -35,14 +28,13 @@ enum clocks_e
 
 static volatile sig_atomic_t should_quit = 0;
 static volatile sig_atomic_t reload_requested = 0;
-static bool mail_path_valid = 0;
+static bool mail_path_valid = false;
 
 void
 read_config(
 	struct timespec *clock_interval,
 	struct timespec *battery_interval,
-	struct timespec *mail_interval,
-	char **mail_path)
+	struct timespec *mail_interval)
 {
 	char *config_full_path;
 	char *path_sep;
@@ -115,13 +107,13 @@ read_config(
 
 		if (strncmp(line, "inbox directory", strlen("inbox directory")) == 0)
 		{
-			if (*mail_path != NULL) free (*mail_path);
+			if (mail_path_valid && *get_mail_path_ptr() != NULL) close_mail();
 			delim++;
 			while (*delim == ' ') delim++;
-			if (asprintf(mail_path, "%s/new", delim) == -1)
+			if (asprintf(get_mail_path_ptr(), "%s/new", delim) == -1)
 				perror("asprintf");
 			else
-				mail_path_valid = 1;
+				mail_path_valid = true;
 
 			continue;
 		}
@@ -169,82 +161,6 @@ read_config(
 }
 
 void
-get_battery(char *battery_string, int fd)
-{
-	struct apm_power_info pinfo;
-	char *pstate;
-
-	if (ioctl(fd, APM_IOC_GETPOWER, &pinfo) < 0)
-	{
-		perror("ioctl");
-		strcpy(battery_string, unknown_glyph);
-
-		return;
-	}
-
-	if (pinfo.ac_state == APM_AC_ON)
-		pstate = plug_glyph;
-	else if (pinfo.battery_state == APM_BATT_CRITICAL)
-		pstate = battery_low_glyph;
-	else if (pinfo.ac_state == APM_AC_UNKNOWN || pinfo.battery_state == APM_BATT_UNKNOWN)
-		pstate = unknown_glyph;
-	else
-		pstate = battery_glyph;
-
-	(void)snprintf(battery_string, 12, "%s  %3d%%", pstate, pinfo.battery_life);
-}
-
-void
-get_volume(void *arg, unsigned int addr, unsigned int val)
-{
-	char *volume_string = arg;
-
-	(void)addr;
-	(void)snprintf(volume_string, 10, "%s  %3d%%", volume_glyph, val * 100 / 255);
-}
-
-void
-init_volume(void *arg, struct sioctl_desc *desc, int val)
-{
-	static bool did_init = false;
-	char *volume_string = arg;
-
-	if (!did_init && desc != NULL && strcmp(desc->func, "level") == 0)
-	{
-		(void)snprintf(volume_string, 10, "%s  %3d%%", volume_glyph, val * 100 / 255);
-		did_init = true;
-	}
-}
-
-void
-get_mail(char *mail_string, const char *mail_path)
-{
-	DIR *dir;
-	struct dirent *dp;
-
-	if (mail_path == NULL) return;
-
-	dir = opendir(mail_path);
-	if (dir == NULL)
-	{
-		perror("opendir");
-		mail_path_valid = 0;
-
-		return;
-	}
-	for (;;)
-	{
-		dp = readdir(dir);
-
-		if (dp == NULL ||
-			(strcmp(dp->d_name, ".") != 0
-			&& strcmp(dp->d_name, "..") != 0)) break;
-	}
-	(void)snprintf(mail_string, 4, "%s", dp ? mail_glyph : " ");
-	(void)closedir(dir);
-}
-
-void
 quit_handler(int sig, siginfo_t *info, void *context)
 {
 	(void)sig;
@@ -288,10 +204,6 @@ main(void)
 	Display *display = XOpenDisplay(NULL);
 	Window root;
 	char statbar_text[MAX_STATBAR_LEN];
-	char battery_string[11];
-	char volume_string[11];
-	char mail_string[5];
-	char *mail_path = NULL;
 	bool dirty = true;
 	bool apm_open = false;
 	bool hdl_open = false;
@@ -302,11 +214,9 @@ main(void)
 	struct timespec clock_interval = { .tv_sec = 1 };
 	struct timespec battery_interval = { .tv_sec = 5 };
 	struct timespec mail_interval = { .tv_sec = 30 };
-	struct sioctl_hdl *hdl;
 	struct pollfd *pfd;
 	int nfds = 0;
 	int nev;
-	int apm_fd;
 	int i;
 
 	if (display == NULL)
@@ -321,40 +231,16 @@ main(void)
 	root = DefaultRootWindow(display);
 
 	/* Init components */
-	read_config(&clock_interval, &battery_interval, &mail_interval, &mail_path);
+	read_config(&clock_interval, &battery_interval, &mail_interval);
 	(void)clock_gettime(CLOCK_MONOTONIC, &now);
 	timespecadd(&now, &clock_interval, &clocks[CLOCK_CLOCK]);
 	timespecadd(&now, &battery_interval, &clocks[BATTERY_CLOCK]);
 	timespecadd(&now, &mail_interval, &clocks[MAIL_CLOCK]);
 
 	get_clock();
-
-	apm_fd = open("/dev/apm", O_RDONLY);
-	if (apm_fd < 0)
-	{
-		perror("open");
-		(void)strcpy(battery_string, "Bat: ?");
-	}
-	else
-	{
-		get_battery(battery_string, apm_fd);
-		apm_open = true;
-	}
-
-	hdl = sioctl_open(SIO_DEVANY, SIOCTL_READ, 0);
-	if (hdl == NULL)
-	{
-		(void)fputs("Could not open sndio\n", stderr);
-		(void)strcpy(volume_string, "Vol: ?");
-	}
-	else
-	{
-		nfds += sioctl_nfds(hdl);
-		(void)sioctl_ondesc(hdl, init_volume, volume_string);
-		(void)sioctl_onval(hdl, get_volume, volume_string);
-		hdl_open = true;
-	}
-	get_mail(mail_string, mail_path);
+	apm_open = init_battery();
+	hdl_open = init_volume(&nfds);
+	mail_path_valid = get_mail();
 
 	pfd = malloc(nfds * sizeof(struct pollfd));
 	if (pfd == NULL)
@@ -365,14 +251,13 @@ main(void)
 
 	while (!should_quit)
 	{
-		if (reload_requested) read_config(&clock_interval, &battery_interval, &mail_interval, &mail_path);
-		if (mail_path_valid == 0 && mail_path != NULL)
-		{
-			free(mail_path);
-			mail_path = NULL;
-		}
+		if (reload_requested) read_config(&clock_interval, &battery_interval, &mail_interval);
+		if (mail_path_valid == false)
+			close_mail();
+
 		(void)clock_gettime(CLOCK_MONOTONIC, &now);
-		nev = sioctl_pollfd(hdl, pfd, POLLIN);
+		nev = 0;
+		nev += get_volume_nev(pfd);
 
 		next_event = NULL;
 		for (i = 0; i < CLOCKS_COUNT; i++)
@@ -401,12 +286,8 @@ main(void)
 
 		if (ppoll(pfd, nev, &next_interval, NULL) > 0)
 		{
-			if (hdl_open && sioctl_revents(hdl, pfd) & POLLHUP)
-			{
-				(void)fputs("Lost connection to sndio\n", stderr);
-				sioctl_close(hdl);
-				hdl_open = false;
-			}
+			if (hdl_open)
+				process_volume_events(pfd, &hdl_open);
 
 			dirty = true;
 		}
@@ -423,16 +304,16 @@ main(void)
 		/* Battery */
 		if (apm_open && timespeccmp(&now, &clocks[BATTERY_CLOCK], >=))
 		{
-			get_battery(battery_string, apm_fd);
+			get_battery();
 			dirty = true;
 			while (timespeccmp(&now, &clocks[BATTERY_CLOCK], >=))
 				timespecadd(&clocks[BATTERY_CLOCK], &battery_interval, &clocks[BATTERY_CLOCK]);
 		}
 
 		/* Mail */
-		if (timespeccmp(&now, &clocks[MAIL_CLOCK], >=))
+		if (mail_path_valid && timespeccmp(&now, &clocks[MAIL_CLOCK], >=))
 		{
-			get_mail(mail_string, mail_path);
+			mail_path_valid = get_mail();
 			dirty = true;
 			while (timespeccmp(&now, &clocks[MAIL_CLOCK], >=))
 				timespecadd(&clocks[MAIL_CLOCK], &mail_interval, &clocks[MAIL_CLOCK]);
@@ -452,9 +333,9 @@ main(void)
 	}
 
 cleanup:
-	if (apm_open) (void)close(apm_fd);
-	if (hdl_open) sioctl_close(hdl);
-	if (mail_path) free(mail_path);
+	if (apm_open) close_battery();
+	if (hdl_open) close_volume();
+	if (mail_path_valid) close_mail(); 
 	free(pfd);
 
 	return 0;
