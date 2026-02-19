@@ -3,7 +3,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -22,6 +21,8 @@
 
 #include <unicode/utf8.h>
 
+#include "statbar.h"
+
 #define MAX_STATBAR_LEN 128
 
 enum clocks_e
@@ -35,37 +36,6 @@ enum clocks_e
 static volatile sig_atomic_t should_quit = 0;
 static volatile sig_atomic_t reload_requested = 0;
 static bool mail_path_valid = 0;
-
-static char mail_glyph[5];
-static char volume_glyph[5];
-static char battery_glyph[5];
-static char plug_glyph[5];
-static char battery_low_glyph[5];
-static char unknown_glyph[5];
-
-void
-init_glyphs(void)
-{
-	UChar32 mail_cp = 0xeb1c;
-	UChar32 volume_cp = 0xf028;
-	UChar32 battery_cp = 0xf241;
-	UChar32 plug_cp = 0xf492;
-	UChar32 batt_low_cp = 0xf243;
-	UChar32 unknown_cp = 0xeb32;
-	int32_t i = 0;
-
-	U8_APPEND_UNSAFE(mail_glyph, i, mail_cp);
-	i = 0;
-	U8_APPEND_UNSAFE(volume_glyph, i, volume_cp);
-	i = 0;
-	U8_APPEND_UNSAFE(battery_glyph, i, battery_cp);
-	i = 0;
-	U8_APPEND_UNSAFE(plug_glyph, i, plug_cp);
-	i = 0;
-	U8_APPEND_UNSAFE(battery_low_glyph, i, batt_low_cp);
-	i = 0;
-	U8_APPEND_UNSAFE(unknown_glyph, i, unknown_cp);
-}
 
 void
 read_config(
@@ -199,19 +169,6 @@ read_config(
 }
 
 void
-get_clock(char *clock_string)
-{
-	time_t current_time;
-	char *nline;
-
-	current_time = time(NULL);
-	if (ctime_r(&current_time, clock_string) == NULL) return;
-
-	nline = strchr(clock_string, '\n');
-	if (nline) *nline = '\0';
-}
-
-void
 get_battery(char *battery_string, int fd)
 {
 	struct apm_power_info pinfo;
@@ -331,7 +288,6 @@ main(void)
 	Display *display = XOpenDisplay(NULL);
 	Window root;
 	char statbar_text[MAX_STATBAR_LEN];
-	char clock_string[26];
 	char battery_string[11];
 	char volume_string[11];
 	char mail_string[5];
@@ -371,7 +327,7 @@ main(void)
 	timespecadd(&now, &battery_interval, &clocks[BATTERY_CLOCK]);
 	timespecadd(&now, &mail_interval, &clocks[MAIL_CLOCK]);
 
-	get_clock(clock_string);
+	get_clock();
 
 	apm_fd = open("/dev/apm", O_RDONLY);
 	if (apm_fd < 0)
@@ -459,7 +415,7 @@ main(void)
 		/* Clock */
 		if (timespeccmp(&now, &clocks[CLOCK_CLOCK], >=))
 		{
-			get_clock(clock_string);
+			get_clock();
 			dirty = true;
 			while (timespeccmp(&now, &clocks[CLOCK_CLOCK], >=))
 				timespecadd(&clocks[CLOCK_CLOCK], &clock_interval, &clocks[CLOCK_CLOCK]);
