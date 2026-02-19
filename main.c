@@ -20,6 +20,8 @@
 #include <sndio.h>
 #include <X11/Xlib.h>
 
+#include <unicode/utf8.h>
+
 #define MAX_STATBAR_LEN 128
 
 enum clocks_e
@@ -33,6 +35,37 @@ enum clocks_e
 static volatile sig_atomic_t should_quit = 0;
 static volatile sig_atomic_t reload_requested = 0;
 static bool mail_path_valid = 0;
+
+static char mail_glyph[5];
+static char volume_glyph[5];
+static char battery_glyph[5];
+static char plug_glyph[5];
+static char battery_low_glyph[5];
+static char unknown_glyph[5];
+
+void
+init_glyphs(void)
+{
+	UChar32 mail_cp = 0xeb1c;
+	UChar32 volume_cp = 0xf028;
+	UChar32 battery_cp = 0xf241;
+	UChar32 plug_cp = 0xf492;
+	UChar32 batt_low_cp = 0xf243;
+	UChar32 unknown_cp = 0xeb32;
+	int32_t i = 0;
+
+	U8_APPEND_UNSAFE(mail_glyph, i, mail_cp);
+	i = 0;
+	U8_APPEND_UNSAFE(volume_glyph, i, volume_cp);
+	i = 0;
+	U8_APPEND_UNSAFE(battery_glyph, i, battery_cp);
+	i = 0;
+	U8_APPEND_UNSAFE(plug_glyph, i, plug_cp);
+	i = 0;
+	U8_APPEND_UNSAFE(battery_low_glyph, i, batt_low_cp);
+	i = 0;
+	U8_APPEND_UNSAFE(unknown_glyph, i, unknown_cp);
+}
 
 void
 read_config(
@@ -182,26 +215,26 @@ void
 get_battery(char *battery_string, int fd)
 {
 	struct apm_power_info pinfo;
-	char pstate;
+	char *pstate;
 
 	if (ioctl(fd, APM_IOC_GETPOWER, &pinfo) < 0)
 	{
 		perror("ioctl");
-		strcpy(battery_string, "Bat: ?");
+		strcpy(battery_string, unknown_glyph);
 
 		return;
 	}
 
 	if (pinfo.ac_state == APM_AC_ON)
-		pstate = '+';
+		pstate = plug_glyph;
 	else if (pinfo.battery_state == APM_BATT_CRITICAL)
-		pstate = '!';
+		pstate = battery_low_glyph;
 	else if (pinfo.ac_state == APM_AC_UNKNOWN || pinfo.battery_state == APM_BATT_UNKNOWN)
-		pstate = '?';
+		pstate = unknown_glyph;
 	else
-		pstate = ' ';
+		pstate = battery_glyph;
 
-	(void)snprintf(battery_string, 12, "Bat: %3d%% %c", pinfo.battery_life, pstate);
+	(void)snprintf(battery_string, 12, "%s  %3d%%", pstate, pinfo.battery_life);
 }
 
 void
@@ -210,7 +243,7 @@ get_volume(void *arg, unsigned int addr, unsigned int val)
 	char *volume_string = arg;
 
 	(void)addr;
-	(void)snprintf(volume_string, 10, "Vol: %3d%%", val * 100 / 255);
+	(void)snprintf(volume_string, 10, "%s  %3d%%", volume_glyph, val * 100 / 255);
 }
 
 void
@@ -221,7 +254,7 @@ init_volume(void *arg, struct sioctl_desc *desc, int val)
 
 	if (!did_init && desc != NULL && strcmp(desc->func, "level") == 0)
 	{
-		(void)snprintf(volume_string, 10, "Vol: %3d%%", val * 100 / 255);
+		(void)snprintf(volume_string, 10, "%s  %3d%%", volume_glyph, val * 100 / 255);
 		did_init = true;
 	}
 }
@@ -250,7 +283,7 @@ get_mail(char *mail_string, const char *mail_path)
 			(strcmp(dp->d_name, ".") != 0
 			&& strcmp(dp->d_name, "..") != 0)) break;
 	}
-	*mail_string = dp ? 'M' : ' ';
+	(void)snprintf(mail_string, 4, "%s", dp ? mail_glyph : " ");
 	(void)closedir(dir);
 }
 
@@ -299,9 +332,9 @@ main(void)
 	Window root;
 	char statbar_text[MAX_STATBAR_LEN];
 	char clock_string[26];
-	char battery_string[12];
-	char volume_string[10];
-	char mail_string = ' ';
+	char battery_string[11];
+	char volume_string[11];
+	char mail_string[5];
 	char *mail_path = NULL;
 	bool dirty = true;
 	bool apm_open = false;
@@ -326,6 +359,7 @@ main(void)
 		return 1;
 	}
 	install_signal_handlers();
+	init_glyphs();
 
 	statbar_text[0] = '\0';
 	root = DefaultRootWindow(display);
@@ -364,7 +398,7 @@ main(void)
 		(void)sioctl_onval(hdl, get_volume, volume_string);
 		hdl_open = true;
 	}
-	get_mail(&mail_string, mail_path);
+	get_mail(mail_string, mail_path);
 
 	pfd = malloc(nfds * sizeof(struct pollfd));
 	if (pfd == NULL)
@@ -442,7 +476,7 @@ main(void)
 		/* Mail */
 		if (timespeccmp(&now, &clocks[MAIL_CLOCK], >=))
 		{
-			get_mail(&mail_string, mail_path);
+			get_mail(mail_string, mail_path);
 			dirty = true;
 			while (timespeccmp(&now, &clocks[MAIL_CLOCK], >=))
 				timespecadd(&clocks[MAIL_CLOCK], &mail_interval, &clocks[MAIL_CLOCK]);
@@ -450,7 +484,7 @@ main(void)
 
 		if (dirty)
 		{
-			(void)snprintf(statbar_text, MAX_STATBAR_LEN, "%c | %s | %s | %s",
+			(void)snprintf(statbar_text, MAX_STATBAR_LEN, "%s | %s | %s | %s",
 				mail_string,
 				volume_string,
 				battery_string,
