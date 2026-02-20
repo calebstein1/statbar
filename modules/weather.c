@@ -1,0 +1,99 @@
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <pthread.h>
+
+#include <curl/curl.h>
+
+char weather_string[48] = "...";
+
+static char *weather_location;
+
+char **
+get_weather_location_ptr(void)
+{
+	return &weather_location;
+}
+
+size_t
+write_callback(char *ptr, size_t size, size_t nmemb, void *userdata)
+{
+	char *lbrk;
+	size_t d_len;
+
+	(void)size;
+	(void)userdata;
+
+	lbrk = strchr(ptr, '\n');
+	if (lbrk) *lbrk = '\0';
+
+	d_len = strlen(ptr);
+	if (d_len >= 47) return 0;
+	(void)strcpy(weather_string, ptr);
+	weather_string[d_len] = '\0';
+
+	return nmemb;
+}
+
+void *
+weather_thread(void *arg)
+{
+	CURL *curl;
+	char *wttr_url;
+	bool *weather_dirty = arg;
+
+	if (!weather_location) return NULL;
+
+	if (asprintf(&wttr_url, "https://wttr.in/%s?format=1&u", weather_location) == -1)
+	{
+		perror("asprintf");
+
+		return NULL;
+	}
+	if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK)
+	{
+		(void)fprintf(stderr, "Failed to init libcurl\n");
+
+		return NULL;
+	}
+
+	curl = curl_easy_init();
+	if (!curl)
+	{
+		weather_string[0] = '\0';
+
+		return NULL;
+	}
+	(void)curl_easy_setopt(curl, CURLOPT_URL, wttr_url);
+	(void)curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+	if (curl_easy_perform(curl) == CURLE_OK)
+		*weather_dirty = true;
+
+	curl_easy_cleanup(curl);
+	curl_global_cleanup();
+	free(wttr_url);
+
+	return NULL;
+}
+
+void
+get_weather(bool *weather_dirty)
+{
+	pthread_t *weather_pthread;
+
+	if (pthread_create(weather_pthread, NULL, weather_thread, weather_dirty) != 0)
+	{
+		perror("pthread_create");
+
+		return;
+	}
+}
+
+void
+close_weather(void)
+{
+	free(weather_location);
+}
+

@@ -22,12 +22,14 @@ enum clocks_e
 {
 	CLOCK_CLOCK,
 	BATTERY_CLOCK,
+	WEATHER_CLOCK,
 	MAIL_CLOCK,
 	CLOCKS_COUNT
 };
 
 static volatile sig_atomic_t should_quit = 0;
 static volatile sig_atomic_t reload_requested = 0;
+static bool weather_loc_valid = false;
 static bool mail_path_valid = false;
 
 void
@@ -105,6 +107,19 @@ read_config(
 		nline = strchr(delim, '\n');
 		if (nline != NULL) *nline = '\0';
 
+		if (strncmp(line, "weather location", strlen("weather location")) == 0)
+		{
+			if (weather_loc_valid && *get_weather_location_ptr() != NULL) close_weather();
+			delim++;
+			while (*delim == ' ') delim++;
+			*get_weather_location_ptr() = strdup(delim);
+			if (*get_weather_location_ptr() == NULL)
+				perror("strdup");
+			else
+				weather_loc_valid = true;
+
+			continue;
+		}
 		if (strncmp(line, "inbox directory", strlen("inbox directory")) == 0)
 		{
 			if (mail_path_valid && *get_mail_path_ptr() != NULL) close_mail();
@@ -205,6 +220,7 @@ main(void)
 	Window root;
 	char statbar_text[MAX_STATBAR_LEN];
 	bool dirty = true;
+	bool weather_dirty = false;
 	bool apm_open = false;
 	bool hdl_open = false;
 	struct timespec now;
@@ -213,6 +229,7 @@ main(void)
 	struct timespec next_interval;
 	struct timespec clock_interval = { .tv_sec = 1 };
 	struct timespec battery_interval = { .tv_sec = 5 };
+	struct timespec weather_interval = { .tv_sec = 3600 };
 	struct timespec mail_interval = { .tv_sec = 30 };
 	struct pollfd *pfd;
 	int nfds = 0;
@@ -235,12 +252,14 @@ main(void)
 	(void)clock_gettime(CLOCK_MONOTONIC, &now);
 	timespecadd(&now, &clock_interval, &clocks[CLOCK_CLOCK]);
 	timespecadd(&now, &battery_interval, &clocks[BATTERY_CLOCK]);
+	timespecadd(&now, &weather_interval, &clocks[WEATHER_CLOCK]);
 	timespecadd(&now, &mail_interval, &clocks[MAIL_CLOCK]);
 
 	get_clock();
 	apm_open = init_battery();
 	hdl_open = init_volume(&nfds);
-	mail_path_valid = get_mail();
+	if (weather_loc_valid) get_weather(&weather_dirty);
+	if (mail_path_valid) mail_path_valid = get_mail();
 
 	pfd = malloc(nfds * sizeof(struct pollfd));
 	if (pfd == NULL)
@@ -310,6 +329,19 @@ main(void)
 				timespecadd(&clocks[BATTERY_CLOCK], &battery_interval, &clocks[BATTERY_CLOCK]);
 		}
 
+		/* Weather */
+		if (weather_loc_valid && timespeccmp(&now, &clocks[WEATHER_CLOCK], >=))
+		{
+			get_weather(&weather_dirty);
+			while (timespeccmp(&now, &clocks[WEATHER_CLOCK], >=))
+				timespecadd(&clocks[WEATHER_CLOCK], &weather_interval, &clocks[WEATHER_CLOCK]);
+		}
+		if (weather_dirty)
+		{
+			dirty = true;
+			weather_dirty = false;
+		}
+
 		/* Mail */
 		if (mail_path_valid && timespeccmp(&now, &clocks[MAIL_CLOCK], >=))
 		{
@@ -321,8 +353,9 @@ main(void)
 
 		if (dirty)
 		{
-			(void)snprintf(statbar_text, MAX_STATBAR_LEN, "%s | %s | %s | %s",
+			(void)snprintf(statbar_text, MAX_STATBAR_LEN, "%s | %s | %s | %s | %s",
 				mail_string,
+				weather_string,
 				volume_string,
 				battery_string,
 				clock_string);
@@ -335,6 +368,7 @@ main(void)
 cleanup:
 	if (apm_open) close_battery();
 	if (hdl_open) close_volume();
+	if (weather_loc_valid) close_weather();
 	if (mail_path_valid) close_mail(); 
 	free(pfd);
 

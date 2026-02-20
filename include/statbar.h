@@ -39,3 +39,10 @@ extern bool get_mail(void);
 extern char **get_mail_path_ptr(void);
 extern void close_mail(void);
 
+/* Weather */
+extern char weather_string[36];
+
+extern void get_weather(bool *weather_dirty);
+extern char **get_weather_location_ptr(void);
+extern void close_weather();
+
