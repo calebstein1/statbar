@@ -184,7 +184,6 @@ quit_handler(int sig, siginfo_t *info, void *context)
 	(void)sig;
 	(void)info;
 	(void)context;
-	if (logfile_open) (void)fputs("Quitting statbar\n", logfile);
 
 	should_quit = 1;
 }
@@ -195,7 +194,6 @@ reload_handler(int sig, siginfo_t *info, void *context)
 	(void)sig;
 	(void)info;
 	(void)context;
-	if (logfile_open) (void)fputs("Reloading config\n", logfile);
 
 	reload_requested = 1;
 }
