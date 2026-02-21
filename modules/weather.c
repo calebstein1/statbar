@@ -11,6 +11,7 @@
 
 char weather_string[48] = "...";
 
+static pthread_t weather_pthread;
 static char *weather_location;
 
 char **
@@ -94,9 +95,7 @@ weather_thread(void *arg)
 void
 get_weather(bool *weather_dirty)
 {
-	pthread_t *weather_pthread;
-
-	if (pthread_create(weather_pthread, NULL, weather_thread, weather_dirty) != 0)
+	if (pthread_create(&weather_pthread, NULL, weather_thread, weather_dirty) != 0)
 	{
 		logerr("weather: pthread_create");
 
