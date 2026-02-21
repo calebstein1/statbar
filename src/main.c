@@ -32,6 +32,9 @@ static volatile sig_atomic_t reload_requested = 0;
 static bool weather_loc_valid = false;
 static bool mail_path_valid = false;
 
+FILE *logfile;
+bool logfile_open = false;
+
 void
 read_config(
 	struct timespec *clock_interval,
@@ -60,14 +63,14 @@ read_config(
 
 	if (pw == NULL)
 	{
-		perror("getpwuid");
+		logerr("getpwuid");
 
 		return;
 	}
 
 	if (asprintf(&config_full_path, "%s/.config/statbar/statbar.conf", pw->pw_dir) == -1)
 	{
-		perror("asprintf");
+		logerr("asprintf");
 
 		return;
 	}
@@ -79,7 +82,7 @@ read_config(
 		mkdir_ret = mkdir(config_full_path, 0700);
 		if (mkdir_ret != 0 && errno != EEXIST)
 		{
-			perror("mkdir");
+			logerr("mkdir");
 			free(config_full_path);
 
 			return;
@@ -114,7 +117,7 @@ read_config(
 			while (*delim == ' ') delim++;
 			*get_weather_location_ptr() = strdup(delim);
 			if (*get_weather_location_ptr() == NULL)
-				perror("strdup");
+				logerr("strdup");
 			else
 				weather_loc_valid = true;
 
@@ -126,7 +129,7 @@ read_config(
 			delim++;
 			while (*delim == ' ') delim++;
 			if (asprintf(get_mail_path_ptr(), "%s/new", delim) == -1)
-				perror("asprintf");
+				logerr("asprintf");
 			else
 				mail_path_valid = true;
 
@@ -163,7 +166,7 @@ read_config(
 		continue;
 
 	read_err:
-		(void)fprintf(stderr, "Config syntax error line %d: %s\n", i, line);
+		(void)fprintf(logfile_open ? logfile : stderr, "Config syntax error line %d: %s\n", i, line);
 		free(line);
 		(void)fclose(file);
 
@@ -171,7 +174,7 @@ read_config(
 	}
 	free(line);
 	if (ferror(file))
-		perror("getline");
+		logerr("getline");
 	(void)fclose(file);
 }
 
@@ -181,6 +184,7 @@ quit_handler(int sig, siginfo_t *info, void *context)
 	(void)sig;
 	(void)info;
 	(void)context;
+	if (logfile_open) (void)fputs("Quitting statbar\n", logfile);
 
 	should_quit = 1;
 }
@@ -191,6 +195,7 @@ reload_handler(int sig, siginfo_t *info, void *context)
 	(void)sig;
 	(void)info;
 	(void)context;
+	if (logfile_open) (void)fputs("Reloading config\n", logfile);
 
 	reload_requested = 1;
 }
@@ -208,9 +213,9 @@ install_signal_handlers(void)
 	reload_requested_action.sa_flags = SA_SIGINFO | SA_RESTART;
 	(void)sigemptyset(&reload_requested_action.sa_mask);
 
-	if (sigaction(SIGTERM, &should_quit_action, NULL) == -1) perror("sigaction");
-	if (sigaction(SIGINT, &should_quit_action, NULL) == -1) perror("sigaction");
-	if (sigaction(SIGUSR1, &reload_requested_action, NULL) == -1) perror("sigaction");
+	if (sigaction(SIGTERM, &should_quit_action, NULL) == -1) logerr("sigaction");
+	if (sigaction(SIGINT, &should_quit_action, NULL) == -1) logerr("sigaction");
+	if (sigaction(SIGUSR1, &reload_requested_action, NULL) == -1) logerr("sigaction");
 }
 
 int
@@ -236,9 +241,23 @@ main(void)
 	int nev;
 	int i;
 
+	logfile = fopen(".statbar.log", "w+");
+	if (logfile == NULL)
+	{
+		perror("fopen");
+	}
+	else
+	{
+		(void)fputs("Welcome to statbar\n", logfile);
+		(void)setvbuf(logfile, NULL, _IOLBF, 0);
+		logfile_open = true;
+	}
+
 	if (display == NULL)
 	{
-		(void)fputs("Failed to get display\n", stderr);
+		(void)fputs("Failed to get display\n", logfile_open ? logfile : stderr);
+		if (logfile_open) fclose(logfile);
+
 		return 1;
 	}
 	install_signal_handlers();
@@ -370,6 +389,7 @@ cleanup:
 	if (hdl_open) close_volume();
 	if (weather_loc_valid) close_weather();
 	if (mail_path_valid) close_mail(); 
+	if (logfile_open) fclose(logfile);
 	free(pfd);
 
 	return 0;

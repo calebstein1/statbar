@@ -38,8 +38,8 @@ init_volume(int *nfds)
 	hdl = sioctl_open(SIO_DEVANY, SIOCTL_READ, 0);
 	if (hdl == NULL)
 	{
-		(void)fputs("Could not open sndio\n", stderr);
-		(void)strcpy(volume_string, "Vol: ?");
+		(void)fputs("Could not open sndio\n", logfile_open ? logfile : stderr);
+		(void)strcpy(volume_string, unknown_glyph);
 
 		return false;
 	}
@@ -61,7 +61,7 @@ process_volume_events(struct pollfd *pfd, bool *hdl_open)
 {
 			if (sioctl_revents(hdl, pfd) & POLLHUP)
 			{
-				(void)fputs("Lost connection to sndio\n", stderr);
+				(void)fputs("Lost connection to sndio\n", logfile_open ? logfile : stderr);
 				sioctl_close(hdl);
 				*hdl_open = false;
 			}

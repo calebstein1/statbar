@@ -1,6 +1,20 @@
+#include <errno.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 #include <poll.h>
+
+#define logerr(msg) \
+	do \
+	{ \
+		if (logfile_open) \
+			(void)fprintf(logfile, "%s: %s\n", msg, strerror(errno)); \
+		else \
+			perror(msg); \
+	} while (0)
+
+extern FILE *logfile;
+extern bool logfile_open;
 
 /* Glyphs */
 extern char mail_glyph[5];
@@ -40,7 +54,7 @@ extern char **get_mail_path_ptr(void);
 extern void close_mail(void);
 
 /* Weather */
-extern char weather_string[36];
+extern char weather_string[48];
 
 extern void get_weather(bool *weather_dirty);
 extern char **get_weather_location_ptr(void);

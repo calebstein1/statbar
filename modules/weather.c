@@ -7,6 +7,8 @@
 
 #include <curl/curl.h>
 
+#include "statbar.h"
+
 char weather_string[48] = "...";
 
 static char *weather_location;
@@ -30,7 +32,13 @@ write_callback(char *ptr, size_t size, size_t nmemb, void *userdata)
 	if (lbrk) *lbrk = '\0';
 
 	d_len = strlen(ptr);
-	if (d_len >= 47) return 0;
+	if (d_len >= 47)
+	{
+		if (logfile_open)
+			(void)fprintf(logfile, "weather: too much data from server, got %lu, maximum is 47\n", d_len);
+
+		return 0;
+	}
 	(void)strcpy(weather_string, ptr);
 	weather_string[d_len] = '\0';
 
@@ -43,18 +51,19 @@ weather_thread(void *arg)
 	CURL *curl;
 	char *wttr_url;
 	bool *weather_dirty = arg;
+	char err_buff[CURL_ERROR_SIZE];
 
 	if (!weather_location) return NULL;
 
 	if (asprintf(&wttr_url, "https://wttr.in/%s?format=1&u", weather_location) == -1)
 	{
-		perror("asprintf");
+		logerr("weather: asprintf");
 
 		return NULL;
 	}
 	if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK)
 	{
-		(void)fprintf(stderr, "Failed to init libcurl\n");
+		(void)fprintf(logfile_open ? logfile : stderr, "Failed to init libcurl\n");
 
 		return NULL;
 	}
@@ -62,14 +71,18 @@ weather_thread(void *arg)
 	curl = curl_easy_init();
 	if (!curl)
 	{
+		(void)fputs("weather: failed to init libcurl\n", logfile);
 		weather_string[0] = '\0';
 
 		return NULL;
 	}
+	(void)curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, err_buff);
 	(void)curl_easy_setopt(curl, CURLOPT_URL, wttr_url);
 	(void)curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
 	if (curl_easy_perform(curl) == CURLE_OK)
 		*weather_dirty = true;
+	else
+		if (logfile_open) (void)fprintf(logfile, "weather request failed: %s\n", err_buff);
 
 	curl_easy_cleanup(curl);
 	curl_global_cleanup();
@@ -85,7 +98,7 @@ get_weather(bool *weather_dirty)
 
 	if (pthread_create(weather_pthread, NULL, weather_thread, weather_dirty) != 0)
 	{
-		perror("pthread_create");
+		logerr("weather: pthread_create");
 
 		return;
 	}

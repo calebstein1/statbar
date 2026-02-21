@@ -19,8 +19,8 @@ init_battery(void)
 	fd = open("/dev/apm", O_RDONLY);
 	if (fd < 0)
 	{
-		perror("open");
-		(void)strcpy(battery_string, "Bat: ?");
+		logerr("battery: open");
+		(void)strcpy(battery_string, unknown_glyph);
 
 		return false;
 	}
@@ -37,7 +37,7 @@ get_battery()
 
 	if (ioctl(fd, APM_IOC_GETPOWER, &pinfo) < 0)
 	{
-		perror("ioctl");
+		perror("battery: ioctl");
 		strcpy(battery_string, unknown_glyph);
 
 		return;

@@ -26,7 +26,7 @@ get_mail(void)
 	dir = opendir(mail_path);
 	if (dir == NULL)
 	{
-		perror("opendir");
+		logerr("mail: opendir");
 
 		return false;
 	}
