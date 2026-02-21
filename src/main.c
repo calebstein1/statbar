@@ -268,7 +268,7 @@ main(void)
 
 	/* Init components */
 	read_config(&clock_interval, &battery_interval, &mail_interval);
-	(void)clock_gettime(CLOCK_MONOTONIC, &now);
+	(void)clock_gettime(CLOCK_BOOTTIME, &now);
 	timespecadd(&now, &clock_interval, &clocks[CLOCK_CLOCK]);
 	timespecadd(&now, &battery_interval, &clocks[BATTERY_CLOCK]);
 	timespecadd(&now, &weather_interval, &clocks[WEATHER_CLOCK]);
@@ -293,7 +293,7 @@ main(void)
 		if (mail_path_valid == false)
 			close_mail();
 
-		(void)clock_gettime(CLOCK_MONOTONIC, &now);
+		(void)clock_gettime(CLOCK_BOOTTIME, &now);
 		nev = 0;
 		nev += get_volume_nev(pfd);
 
@@ -329,7 +329,7 @@ main(void)
 
 			dirty = true;
 		}
-		(void)clock_gettime(CLOCK_MONOTONIC, &now);
+		(void)clock_gettime(CLOCK_BOOTTIME, &now);
 
 		/* Clock */
 		if (timespeccmp(&now, &clocks[CLOCK_CLOCK], >=))
