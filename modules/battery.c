@@ -45,6 +45,8 @@ get_battery()
 
 	if (pinfo.ac_state == APM_AC_ON)
 		pstate = plug_glyph;
+	else if (pinfo.battery_state == APM_BATT_LOW)
+		pstate = battery_mid_glyph;
 	else if (pinfo.battery_state == APM_BATT_CRITICAL)
 		pstate = battery_low_glyph;
 	else if (pinfo.ac_state == APM_AC_UNKNOWN || pinfo.battery_state == APM_BATT_UNKNOWN)
