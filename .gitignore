@@ -1,5 +1,5 @@
-statbar
-*.d
-*.o
-*.po
-*.a
+**/statbar
+**/*.d
+**/*.o
+**/*.po
+**/*.a
