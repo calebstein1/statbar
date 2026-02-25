@@ -388,6 +388,7 @@ cleanup:
 	if (weather_loc_valid) close_weather();
 	if (mail_path_valid) close_mail(); 
 	if (logfile_open) fclose(logfile);
+	(void)XCloseDisplay(display);
 	free(pfd);
 
 	return 0;
