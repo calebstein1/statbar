@@ -4,6 +4,8 @@
 
 char mail_glyph[5];
 char volume_glyph[5];
+char volume_low_glyph[5];
+char volume_off_glyph[5];
 char battery_glyph[5];
 char battery_mid_glyph[5];
 char plug_glyph[5];
@@ -15,6 +17,8 @@ init_glyphs(void)
 {
 	UChar32 mail_cp = 0xeb1c;
 	UChar32 volume_cp = 0xf028;
+	UChar32 volume_low_cp = 0xf027;
+	UChar32 volume_off_cp = 0xf026;
 	UChar32 battery_cp = 0xf241;
 	UChar32 batt_mid_cp = 0xf242;
 	UChar32 plug_cp = 0xf492;
@@ -25,6 +29,10 @@ init_glyphs(void)
 	U8_APPEND_UNSAFE(mail_glyph, i, mail_cp);
 	i = 0;
 	U8_APPEND_UNSAFE(volume_glyph, i, volume_cp);
+	i = 0;
+	U8_APPEND_UNSAFE(volume_low_glyph, i, volume_low_cp);
+	i = 0;
+	U8_APPEND_UNSAFE(volume_off_glyph, i, volume_off_cp);
 	i = 0;
 	U8_APPEND_UNSAFE(battery_glyph, i, battery_cp);
 	i = 0;

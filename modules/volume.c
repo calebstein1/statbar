@@ -14,20 +14,39 @@ static struct sioctl_hdl *hdl;
 void
 onval(void *arg, unsigned int addr, unsigned int val)
 {
+	char *vglyph;
+
 	(void)arg;
 	(void)addr;
-	(void)snprintf(volume_string, 11, "%s  %3d%%", volume_glyph, val * 100 / 255);
+
+	if (val == 0)
+		vglyph = volume_off_glyph;
+	else if (val < 128)
+		vglyph = volume_low_glyph;
+	else
+		vglyph = volume_glyph;
+
+	(void)snprintf(volume_string, 11, "%s  %3d%%", vglyph, val * 100 / 255);
 }
 
 void
 ondesc(void *arg, struct sioctl_desc *desc, int val)
 {
 	static bool did_init = false;
+	char *vglyph;
 
 	(void)arg;
+
+	if (val == 0)
+		vglyph = volume_off_glyph;
+	else if (val < 128)
+		vglyph = volume_low_glyph;
+	else
+		vglyph = volume_glyph;
+
 	if (!did_init && desc != NULL && strcmp(desc->func, "level") == 0)
 	{
-		(void)snprintf(volume_string, 11, "%s  %3d%%", volume_glyph, val * 100 / 255);
+		(void)snprintf(volume_string, 11, "%s  %3d%%", vglyph, val * 100 / 255);
 		did_init = true;
 	}
 }

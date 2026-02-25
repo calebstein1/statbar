@@ -19,6 +19,8 @@ extern bool logfile_open;
 /* Glyphs */
 extern char mail_glyph[5];
 extern char volume_glyph[5];
+extern char volume_low_glyph[5];
+extern char volume_off_glyph[5];
 extern char battery_glyph[5];
 extern char battery_mid_glyph[5];
 extern char plug_glyph[5];
