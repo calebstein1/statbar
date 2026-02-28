@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include <pthread.h>
+#include <unistd.h>
 
 #include <curl/curl.h>
 
@@ -53,6 +54,8 @@ weather_thread(void *arg)
 	char *wttr_url;
 	bool *weather_dirty = arg;
 	char err_buff[CURL_ERROR_SIZE];
+	CURLcode curle;
+	int request_count = 0;
 
 	if (!weather_location) return NULL;
 
@@ -80,14 +83,25 @@ weather_thread(void *arg)
 	(void)curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, err_buff);
 	(void)curl_easy_setopt(curl, CURLOPT_URL, wttr_url);
 	(void)curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-	if (curl_easy_perform(curl) == CURLE_OK)
-		*weather_dirty = true;
-	else
-		if (logfile_open) (void)fprintf(logfile, "weather request failed: %s\n", err_buff);
+	do
+	{
+		curle = curl_easy_perform(curl);
+		if (curle != CURLE_OK)
+		{
+			if (logfile_open) (void)fprintf(logfile, "weather request failed: %s\n", err_buff);
+			(void)sleep(1);
+		}
+		else
+		{
+			*weather_dirty = true;
+			break;
+		}
+	} while (request_count++ < 2);
 
 	curl_easy_cleanup(curl);
 	curl_global_cleanup();
 	free(wttr_url);
+	if (logfile_open) (void)fputs("Destroying weather thread\n", logfile);
 
 	return NULL;
 }
@@ -95,6 +109,7 @@ weather_thread(void *arg)
 void
 get_weather(bool *weather_dirty)
 {
+	if (logfile_open) (void)fputs("Creating weather thread\n", logfile);
 	if (pthread_create(&weather_pthread, NULL, weather_thread, weather_dirty) != 0)
 	{
 		logerr("weather: pthread_create");
