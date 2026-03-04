@@ -29,6 +29,7 @@ enum clocks_e
 
 static volatile sig_atomic_t should_quit = 0;
 static volatile sig_atomic_t reload_requested = 0;
+static volatile sig_atomic_t reload_battery = 0;
 static bool weather_loc_valid = false;
 static bool mail_path_valid = false;
 
@@ -179,23 +180,21 @@ read_config(
 }
 
 void
-quit_handler(int sig, siginfo_t *info, void *context)
+sig_handler(int sig)
 {
-	(void)sig;
-	(void)info;
-	(void)context;
-
-	should_quit = 1;
-}
-
-void
-reload_handler(int sig, siginfo_t *info, void *context)
-{
-	(void)sig;
-	(void)info;
-	(void)context;
-
-	reload_requested = 1;
+	switch (sig)
+	{
+		case SIGTERM:
+		case SIGINT:
+			should_quit = 1;
+			break;
+		case SIGUSR1:
+			reload_requested = 1;
+			break;
+		case SIGUSR2:
+			reload_battery = 1;
+			break;
+	}
 }
 
 void
@@ -203,17 +202,22 @@ install_signal_handlers(void)
 {
 	struct sigaction should_quit_action;
 	struct sigaction reload_requested_action;
+	struct sigaction battery_reload_requested_action;
 
-	should_quit_action.sa_sigaction = quit_handler;
-	should_quit_action.sa_flags = SA_SIGINFO | SA_RESTART;
+	should_quit_action.sa_handler = sig_handler;
+	should_quit_action.sa_flags = 0;
 	(void)sigemptyset(&should_quit_action.sa_mask);
-	reload_requested_action.sa_sigaction = reload_handler;
-	reload_requested_action.sa_flags = SA_SIGINFO | SA_RESTART;
+	reload_requested_action.sa_handler = sig_handler;
+	reload_requested_action.sa_flags = 0;
 	(void)sigemptyset(&reload_requested_action.sa_mask);
+	battery_reload_requested_action.sa_handler = sig_handler;
+	battery_reload_requested_action.sa_flags = 0;
+	(void)sigemptyset(&battery_reload_requested_action.sa_mask);
 
 	if (sigaction(SIGTERM, &should_quit_action, NULL) == -1) logerr("sigaction");
 	if (sigaction(SIGINT, &should_quit_action, NULL) == -1) logerr("sigaction");
 	if (sigaction(SIGUSR1, &reload_requested_action, NULL) == -1) logerr("sigaction");
+	if (sigaction(SIGUSR2, &reload_requested_action, NULL) == -1) logerr("sigaction");
 }
 
 int
@@ -338,8 +342,9 @@ main(void)
 				timespecadd(&clocks[CLOCK_CLOCK], &clock_interval, &clocks[CLOCK_CLOCK]);
 		}
 		/* Battery */
-		if (apm_open && timespeccmp(&now, &clocks[BATTERY_CLOCK], >=))
+		if (reload_battery || (apm_open && timespeccmp(&now, &clocks[BATTERY_CLOCK], >=)))
 		{
+			reload_battery = 0;
 			get_battery();
 			dirty = true;
 			while (timespeccmp(&now, &clocks[BATTERY_CLOCK], >=))
@@ -383,6 +388,7 @@ main(void)
 	}
 
 cleanup:
+	if (logfile_open) (void)fputs("Closing statbar\n", logfile);
 	if (apm_open) close_battery();
 	if (hdl_open) close_volume();
 	if (weather_loc_valid) close_weather();
