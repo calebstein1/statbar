@@ -46,6 +46,7 @@ read_config(
 	char *path_sep;
 	time_t clock_ms;
 	time_t battery_ms;
+	char **weather_location;
 	uid_t uid;
 	struct passwd *pw;
 	int mkdir_ret;
@@ -113,11 +114,12 @@ read_config(
 
 		if (strncmp(line, "weather location", strlen("weather location")) == 0)
 		{
-			if (weather_loc_valid && *get_weather_location_ptr() != NULL) close_weather();
+			weather_location = get_weather_location_ptr();
+			if (weather_loc_valid && *weather_location != NULL) close_weather();
 			delim++;
 			while (*delim == ' ') delim++;
-			*get_weather_location_ptr() = strdup(delim);
-			if (*get_weather_location_ptr() == NULL)
+			*weather_location = strdup(delim);
+			if (*weather_location == NULL)
 				logerr("strdup");
 			else
 				weather_loc_valid = true;
