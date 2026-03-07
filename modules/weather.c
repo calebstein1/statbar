@@ -10,6 +10,8 @@
 
 #include "statbar.h"
 
+#define MAX_RETRY_ATTEMPTS 5
+
 char weather_string[48] = "...";
 
 static pthread_t weather_pthread;
@@ -96,7 +98,7 @@ weather_thread(void *arg)
 			*weather_dirty = true;
 			break;
 		}
-	} while (request_count++ < 2);
+	} while (request_count++ < MAX_RETRY_ATTEMPTS - 1);
 
 	curl_easy_cleanup(curl);
 	curl_global_cleanup();
