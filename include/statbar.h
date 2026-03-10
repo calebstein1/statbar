@@ -58,8 +58,9 @@ extern void close_mail(void);
 
 /* Weather */
 extern char weather_string[48];
+extern int weather_pipe[2];
 
-extern void get_weather(bool *weather_dirty);
+extern void get_weather(void);
 extern char **get_weather_location_ptr(void);
-extern void close_weather();
+extern void close_weather(void);
 

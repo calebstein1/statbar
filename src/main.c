@@ -30,11 +30,13 @@ enum clocks_e
 static volatile sig_atomic_t should_quit = 0;
 static volatile sig_atomic_t reload_requested = 0;
 static volatile sig_atomic_t reload_battery = 0;
+static volatile sig_atomic_t reload_weather = 0;
 static bool weather_loc_valid = false;
 static bool mail_path_valid = false;
 
 FILE *logfile;
 bool logfile_open = false;
+int weather_pipe[2];
 
 void
 read_config(
@@ -196,6 +198,9 @@ sig_handler(int sig)
 		case SIGUSR2:
 			reload_battery = 1;
 			break;
+		case SIGWINCH:
+			reload_weather = 1;
+			break;
 	}
 }
 
@@ -205,6 +210,7 @@ install_signal_handlers(void)
 	struct sigaction should_quit_action;
 	struct sigaction reload_requested_action;
 	struct sigaction battery_reload_requested_action;
+	struct sigaction weather_reload_requested_action;
 
 	should_quit_action.sa_handler = sig_handler;
 	should_quit_action.sa_flags = 0;
@@ -215,11 +221,15 @@ install_signal_handlers(void)
 	battery_reload_requested_action.sa_handler = sig_handler;
 	battery_reload_requested_action.sa_flags = 0;
 	(void)sigemptyset(&battery_reload_requested_action.sa_mask);
+	weather_reload_requested_action.sa_handler = sig_handler;
+	weather_reload_requested_action.sa_flags = 0;
+	(void)sigemptyset(&weather_reload_requested_action.sa_mask);
 
 	if (sigaction(SIGTERM, &should_quit_action, NULL) == -1) logerr("sigaction");
 	if (sigaction(SIGINT, &should_quit_action, NULL) == -1) logerr("sigaction");
 	if (sigaction(SIGUSR1, &reload_requested_action, NULL) == -1) logerr("sigaction");
 	if (sigaction(SIGUSR2, &reload_requested_action, NULL) == -1) logerr("sigaction");
+	if (sigaction(SIGWINCH, &weather_reload_requested_action, NULL) == -1) logerr("sigaction");
 }
 
 int
@@ -229,7 +239,8 @@ main(void)
 	Window root;
 	char statbar_text[MAX_STATBAR_LEN];
 	bool dirty = true;
-	bool weather_dirty = false;
+	struct pollfd *weather_pfd = NULL;
+	char wpfd_buf;
 	bool apm_open = false;
 	bool hdl_open = false;
 	struct timespec now;
@@ -277,12 +288,16 @@ main(void)
 	timespecadd(&now, &battery_interval, &clocks[BATTERY_CLOCK]);
 	timespecadd(&now, &weather_interval, &clocks[WEATHER_CLOCK]);
 	timespecadd(&now, &mail_interval, &clocks[MAIL_CLOCK]);
+	if (pipe(weather_pipe) != 0)
+	{
+		logerr("pipe");
+		weather_loc_valid = false;
+	}
 
 	get_clock();
 	apm_open = init_battery();
 	hdl_open = init_volume(&nfds);
-	if (weather_loc_valid) get_weather(&weather_dirty);
-	if (mail_path_valid) mail_path_valid = get_mail();
+	if (weather_loc_valid) nfds++;
 
 	pfd = malloc(nfds * sizeof(struct pollfd));
 	if (pfd == NULL)
@@ -290,6 +305,14 @@ main(void)
 		perror("malloc");
 		goto cleanup;
 	}
+	if (weather_loc_valid)
+	{
+		weather_pfd = &pfd[nfds - 1];
+		weather_pfd->fd = weather_pipe[0];
+		get_weather();
+	}
+	if (mail_path_valid) mail_path_valid = get_mail();
+
 
 	while (!should_quit)
 	{
@@ -300,6 +323,9 @@ main(void)
 		(void)clock_gettime(CLOCK_BOOTTIME, &now);
 		nev = 0;
 		nev += get_volume_nev(pfd);
+		weather_pfd->events = POLLIN;
+		weather_pfd->revents = 0;
+		nev++;
 
 		next_event = NULL;
 		for (i = 0; i < CLOCKS_COUNT; i++)
@@ -330,6 +356,8 @@ main(void)
 		{
 			if (hdl_open)
 				process_volume_events(pfd, &hdl_open);
+			if (weather_pfd && (weather_pfd->revents & POLLIN))
+				(void)read(weather_pipe[0], &wpfd_buf, 1);
 
 			dirty = true;
 		}
@@ -354,16 +382,12 @@ main(void)
 		}
 
 		/* Weather */
-		if (weather_loc_valid && timespeccmp(&now, &clocks[WEATHER_CLOCK], >=))
+		if (weather_pfd && weather_loc_valid && (reload_weather || timespeccmp(&now, &clocks[WEATHER_CLOCK], >=)))
 		{
-			get_weather(&weather_dirty);
+			reload_weather = 0;
+			get_weather();
 			while (timespeccmp(&now, &clocks[WEATHER_CLOCK], >=))
 				timespecadd(&clocks[WEATHER_CLOCK], &weather_interval, &clocks[WEATHER_CLOCK]);
-		}
-		if (weather_dirty)
-		{
-			dirty = true;
-			weather_dirty = false;
 		}
 
 		/* Mail */
@@ -397,6 +421,12 @@ cleanup:
 	if (mail_path_valid) close_mail(); 
 	if (logfile_open) fclose(logfile);
 	(void)XCloseDisplay(display);
+	if (weather_pfd)
+	{
+		weather_pfd = NULL;
+		(void)close(weather_pipe[0]);
+		(void)close(weather_pipe[1]);
+	}
 	free(pfd);
 
 	return 0;

@@ -54,11 +54,11 @@ weather_thread(void *arg)
 {
 	CURL *curl;
 	char *wttr_url;
-	bool *weather_dirty = arg;
 	char err_buff[CURL_ERROR_SIZE];
 	CURLcode curle;
 	int request_count = 0;
 
+	(void)arg;
 	if (!weather_location) return NULL;
 
 	if (asprintf(&wttr_url, "https://wttr.in/%s?format=1&u", weather_location) == -1)
@@ -95,7 +95,7 @@ weather_thread(void *arg)
 		}
 		else
 		{
-			*weather_dirty = true;
+			(void)write(weather_pipe[1], "1", 1);
 			break;
 		}
 	} while (request_count++ < MAX_RETRY_ATTEMPTS - 1);
@@ -109,10 +109,10 @@ weather_thread(void *arg)
 }
 
 void
-get_weather(bool *weather_dirty)
+get_weather(void)
 {
 	if (logfile_open) (void)fputs("Creating weather thread\n", logfile);
-	if (pthread_create(&weather_pthread, NULL, weather_thread, weather_dirty) != 0)
+	if (pthread_create(&weather_pthread, NULL, weather_thread, NULL) != 0)
 	{
 		logerr("weather: pthread_create");
 
