@@ -207,29 +207,17 @@ sig_handler(int sig)
 void
 install_signal_handlers(void)
 {
-	struct sigaction should_quit_action;
-	struct sigaction reload_requested_action;
-	struct sigaction battery_reload_requested_action;
-	struct sigaction weather_reload_requested_action;
+	struct sigaction sa;
 
-	should_quit_action.sa_handler = sig_handler;
-	should_quit_action.sa_flags = 0;
-	(void)sigemptyset(&should_quit_action.sa_mask);
-	reload_requested_action.sa_handler = sig_handler;
-	reload_requested_action.sa_flags = 0;
-	(void)sigemptyset(&reload_requested_action.sa_mask);
-	battery_reload_requested_action.sa_handler = sig_handler;
-	battery_reload_requested_action.sa_flags = 0;
-	(void)sigemptyset(&battery_reload_requested_action.sa_mask);
-	weather_reload_requested_action.sa_handler = sig_handler;
-	weather_reload_requested_action.sa_flags = 0;
-	(void)sigemptyset(&weather_reload_requested_action.sa_mask);
+	sa.sa_handler = sig_handler;
+	sa.sa_flags = 0;
+	(void)sigemptyset(&sa.sa_mask);
 
-	if (sigaction(SIGTERM, &should_quit_action, NULL) == -1) logerr("sigaction");
-	if (sigaction(SIGINT, &should_quit_action, NULL) == -1) logerr("sigaction");
-	if (sigaction(SIGUSR1, &reload_requested_action, NULL) == -1) logerr("sigaction");
-	if (sigaction(SIGUSR2, &reload_requested_action, NULL) == -1) logerr("sigaction");
-	if (sigaction(SIGWINCH, &weather_reload_requested_action, NULL) == -1) logerr("sigaction");
+	if (sigaction(SIGTERM, &sa, NULL) == -1) logerr("sigaction");
+	if (sigaction(SIGINT, &sa, NULL) == -1) logerr("sigaction");
+	if (sigaction(SIGUSR1, &sa, NULL) == -1) logerr("sigaction");
+	if (sigaction(SIGUSR2, &sa, NULL) == -1) logerr("sigaction");
+	if (sigaction(SIGWINCH, &sa, NULL) == -1) logerr("sigaction");
 }
 
 int
