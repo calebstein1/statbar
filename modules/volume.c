@@ -69,10 +69,10 @@ init_volume(int *nfds)
 	return true;
 }
 
-int
-get_volume_nev(struct pollfd *pfd)
+void
+fill_sndio_pfds(struct pollfd *pfd)
 {
-	return sioctl_pollfd(hdl, pfd, POLLIN);
+	sioctl_pollfd(hdl, pfd, POLLIN);
 }
 
 void

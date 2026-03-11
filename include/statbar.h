@@ -45,7 +45,7 @@ extern void close_battery(void);
 extern char volume_string[11];
 
 extern bool init_volume(int *nfds);
-extern int get_volume_nev(struct pollfd *pfd);
+extern void fill_sndio_pfds(struct pollfd *pfd);
 extern void process_volume_events(struct pollfd *pfd, bool *hdl_open);
 extern void close_volume(void);
 

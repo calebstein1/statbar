@@ -241,7 +241,6 @@ main(void)
 	struct timespec mail_interval = { .tv_sec = 30 };
 	struct pollfd *pfd;
 	int nfds = 0;
-	int nev;
 	int i;
 
 	logfile = fopen(".statbar.log", "w+");
@@ -301,7 +300,8 @@ main(void)
 	}
 	if (mail_path_valid) mail_path_valid = get_mail();
 
-
+	fill_sndio_pfds(pfd);
+	weather_pfd->events = POLLIN;
 	while (!should_quit)
 	{
 		if (reload_requested) read_config(&clock_interval, &battery_interval, &mail_interval);
@@ -309,12 +309,6 @@ main(void)
 			close_mail();
 
 		(void)clock_gettime(CLOCK_BOOTTIME, &now);
-		nev = 0;
-		nev += get_volume_nev(pfd);
-		weather_pfd->events = POLLIN;
-		weather_pfd->revents = 0;
-		nev++;
-
 		next_event = NULL;
 		for (i = 0; i < CLOCKS_COUNT; i++)
 		{
@@ -325,9 +319,7 @@ main(void)
 			else
 			{
 				if (timespeccmp(next_event, &clocks[i], >))
-				{
 					next_event = &clocks[i];
-				}
 			}
 		}
 		if (timespeccmp(&now, next_event, >=))
@@ -340,7 +332,7 @@ main(void)
 			timespecsub(next_event, &now, &next_interval);
 		}
 
-		if (ppoll(pfd, nev, &next_interval, NULL) > 0)
+		if (ppoll(pfd, nfds, &next_interval, NULL) > 0)
 		{
 			if (hdl_open)
 				process_volume_events(pfd, &hdl_open);
